@@ -317,6 +317,7 @@
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-payment')">Cancel</button>
       <button class="btn btn-primary" style="flex:2" id="save-pay-btn" onclick="savePayment()">Save Payment</button>
     </div>
+    <input type="hidden" id="payment-editing-id">
   </div>
 </div>
 
@@ -690,7 +691,15 @@ function paymentCard(p) {
     <div class="pay-info">
       <div class="pay-top">
         <div class="pay-name">${esc(debt?.name||'—')}</div>
-        <div class="pay-amount">₱${fmt(p.amount)}</div>
+        <div style="display:flex;align-items:center;gap:.4rem">
+          <div class="pay-amount">₱${fmt(p.amount)}</div>
+          <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditPayment('${p.id}')" title="Edit">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 1 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="btn btn-secondary btn-sm btn-icon" onclick="deletePayment('${p.id}')" title="Delete">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>
       </div>
       <div class="pay-meta">
         <span>${fmtDate(p.date)}</span>
@@ -768,6 +777,7 @@ async function deleteDebt(id) {
 
 // ADD PAYMENT
 function openAddPayment(debtId) {
+  document.querySelector('#modal-payment .modal-title').textContent = 'Log Payment';
   const sel = document.getElementById('payment-debt-id');
   sel.innerHTML = '<option value="">Select debt...</option>' +
     allDebts.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
@@ -777,11 +787,52 @@ function openAddPayment(debtId) {
   document.getElementById('payment-method').value = '';
   document.getElementById('payment-file').value = '';
   document.getElementById('payment-notes').value = '';
+  document.getElementById('payment-editing-id').value = '';
   document.getElementById('file-label').classList.remove('has-file');
   document.getElementById('file-label-text').textContent = 'Attach image or PDF...';
   document.getElementById('upload-info').style.display = 'none';
   document.getElementById('save-pay-btn').disabled = false;
   openModal('modal-payment');
+}
+
+function openEditPayment(id) {
+  const p = allPayments.find(x => x.id === id); if (!p) return;
+  document.querySelector('#modal-payment .modal-title').textContent = 'Edit Payment';
+  const sel = document.getElementById('payment-debt-id');
+  sel.innerHTML = '<option value="">Select debt...</option>' +
+    allDebts.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  sel.value = p.debtId;
+  document.getElementById('payment-date').value = p.date;
+  document.getElementById('payment-amount').value = p.amount;
+  document.getElementById('payment-method').value = p.method;
+  document.getElementById('payment-file').value = '';
+  document.getElementById('payment-notes').value = p.notes;
+  document.getElementById('payment-editing-id').value = p.id;
+  const label = document.getElementById('file-label');
+  const labelText = document.getElementById('file-label-text');
+  if (p.fileName) { label.classList.add('has-file'); labelText.textContent = p.fileName; }
+  else            { label.classList.remove('has-file'); labelText.textContent = 'Attach image or PDF...'; }
+  document.getElementById('upload-info').style.display = 'none';
+  document.getElementById('save-pay-btn').disabled = false;
+  openModal('modal-payment');
+}
+
+async function deletePayment(id) {
+  const p = allPayments.find(x => x.id === id); if (!p) return;
+  const debt = allDebts.find(d => d.id === p.debtId);
+  if (!confirm(`Delete ₱${fmt(p.amount)} payment on ${fmtDate(p.date)} for "${debt?.name||'this debt'}"?`)) return;
+  setSyncState('syncing');
+  try {
+    if (paymentRowMap[id]) await clearSheetRow(PAYMENTS_TAB, paymentRowMap[id]);
+    allPayments = allPayments.filter(x => x.id !== id);
+    // Re-number remaining payments for this debt
+    const debtPays = allPayments.filter(x => x.debtId === p.debtId).sort((a,b) => a.date.localeCompare(b.date));
+    for (let i = 0; i < debtPays.length; i++) {
+      debtPays[i].num = i + 1;
+      await savePaymentToSheets(debtPays[i]);
+    }
+    setSyncState('synced'); renderCurrentView(); toast('Payment deleted');
+  } catch(e) { console.error(e); setSyncState('error'); toast('Delete failed'); }
 }
 function fileChanged(input) {
   const file = input.files[0];
@@ -803,6 +854,7 @@ async function savePayment() {
   if (!amount||amount<=0){ toast('Enter a valid amount'); return; }
   if (!method)          { toast('Select payment method'); return; }
 
+  const editId = document.getElementById('payment-editing-id').value;
   const btn = document.getElementById('save-pay-btn');
   btn.disabled = true; setSyncState('syncing');
   try {
@@ -813,15 +865,34 @@ async function savePayment() {
       fileName = res.name; fileUrl = res.url; fileId = res.id;
       document.getElementById('upload-info').style.display = 'none';
     }
-    const debtPays = allPayments.filter(p => p.debtId===debtId);
-    const num = debtPays.length + 1;
-    const payment = { id:genId(), debtId, date, amount, method, num, fileName, fileUrl, fileId, notes };
-    allPayments.unshift(payment);
-    allPayments.sort((a,b) => b.date.localeCompare(a.date));
-    await savePaymentToSheets(payment);
-    const debt = allDebts.find(d => d.id===debtId);
-    setSyncState('synced'); closeModal('modal-payment'); renderCurrentView();
-    toast(`Payment ${num} of ${debt?.total||'?'} saved ✓`);
+    if (editId) {
+      // EDIT existing payment
+      const idx = allPayments.findIndex(x => x.id === editId);
+      if (idx >= 0) {
+        const existing = allPayments[idx];
+        allPayments[idx] = {
+          ...existing, debtId, date, amount, method, notes,
+          fileName: file ? fileName : existing.fileName,
+          fileUrl:  file ? fileUrl  : existing.fileUrl,
+          fileId:   file ? fileId   : existing.fileId,
+        };
+        allPayments.sort((a,b) => b.date.localeCompare(a.date));
+        await savePaymentToSheets(allPayments[idx]);
+      }
+      setSyncState('synced'); closeModal('modal-payment'); renderCurrentView();
+      toast('Payment updated ✓');
+    } else {
+      // NEW payment
+      const debtPays = allPayments.filter(p => p.debtId===debtId);
+      const num = debtPays.length + 1;
+      const payment = { id:genId(), debtId, date, amount, method, num, fileName, fileUrl, fileId, notes };
+      allPayments.unshift(payment);
+      allPayments.sort((a,b) => b.date.localeCompare(a.date));
+      await savePaymentToSheets(payment);
+      const debt = allDebts.find(d => d.id===debtId);
+      setSyncState('synced'); closeModal('modal-payment'); renderCurrentView();
+      toast(`Payment ${num} of ${debt?.total||'?'} saved ✓`);
+    }
   } catch(e) {
     console.error(e); setSyncState('error');
     toast('Save failed — check connection');
