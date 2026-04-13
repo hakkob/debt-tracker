@@ -357,14 +357,11 @@
 
 <script>
 // ── CONSTANTS ──────────────────────────────────────────────
-const CLIENT_ID    = '1016619293334-ch6q469ml4n0taasgb4eo7o9tk1mkegk.apps.googleusercontent.com';
-const SHEET_ID     = '1Cb6aVmMojV27sLS1O_W_EZkhZndWgwU88UtYUZI9sxo';
-const DEBTS_TAB    = 'Debts';
-const PAYMENTS_TAB = 'Payments';
-const USERS_TAB    = 'Users';
-const OWNER_EMAIL  = 'felipe.jacob.g@gmail.com';
-const TOKEN_KEY    = 'debt_gtoken';
-const SCOPES       = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
+const CLIENT_ID   = '1016619293334-ch6q469ml4n0taasgb4eo7o9tk1mkegk.apps.googleusercontent.com';
+const SCRIPT_URL  = 'YOUR_APPS_SCRIPT_URL_HERE';
+const OWNER_EMAIL = 'felipe.jacob.g@gmail.com';
+const TOKEN_KEY   = 'debt_gtoken';
+const SCOPES      = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
 
 // ── STATE ──────────────────────────────────────────────────
 let accessToken      = null;
@@ -372,9 +369,6 @@ let tokenClient      = null;
 let allDebts         = [];  // {id, name, total, startDate, desc}
 let allPayments      = [];  // {id, debtId, date, amount, method, num, fileName, fileUrl, fileId, notes}
 let allUsers         = [];  // {email, role, debtIds[]}
-let debtRowMap       = {};  // id → sheet row (1-based)
-let paymentRowMap    = {};  // id → sheet row (1-based)
-let userRowMap       = {};  // email → sheet row (1-based)
 let calYear, calMonth;
 let activeFilter     = 'all';
 let currentView      = 'summary';
@@ -428,100 +422,45 @@ function setSyncState(s) {
   document.getElementById('sync-label').textContent = l[s] || l.offline;
 }
 
-async function fetchCurrentUserEmail() {
-  const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  if (!r.ok) throw new Error(`UserInfo ${r.status}`);
-  const d = await r.json();
-  return d.email || null;
-}
-
 async function onSignedIn() {
   showApp(); setSyncState('syncing');
   try {
-    currentUserEmail = await fetchCurrentUserEmail();
-    await ensureHeaders();
-    await loadAll();
-    // Determine role
-    if (currentUserEmail === OWNER_EMAIL) {
-      currentUserRole  = 'owner';
-      currentUserDebts = null;
-      // Auto-register owner in Users tab if not present
-      if (!allUsers.find(u => u.email === OWNER_EMAIL)) {
-        const ownerUser = { email: OWNER_EMAIL, role: 'owner', debtIds: [] };
-        allUsers.push(ownerUser);
-        await saveUserToSheets(ownerUser);
-      }
-    } else {
-      const u = allUsers.find(u => u.email === currentUserEmail);
-      if (!u) { setSyncState('error'); showAuth(); alert('Access denied. Ask the owner to add you as a user.'); return; }
-      currentUserRole  = u.role;
-      currentUserDebts = u.debtIds.length ? u.debtIds : null;
+    const data = await apiCall('load');
+    if (data.error === 'Access denied') {
+      setSyncState('error'); showAuth();
+      alert('Access denied. Ask the owner to add your Gmail as a user.');
+      return;
     }
+    allDebts         = data.debts    || [];
+    allPayments      = (data.payments || []).sort((a,b) => b.date.localeCompare(a.date));
+    allUsers         = data.users    || [];
+    currentUserEmail = data.email;
+    currentUserRole  = data.role;
+    currentUserDebts = null; // filtering is done server-side; we only receive allowed data
     setSyncState('synced');
     renderCurrentView();
   } catch(e) {
     console.error(e);
-    if (String(e).includes('401')) {
+    if (String(e).includes('401') || String(e).includes('Unauthorized')) {
       accessToken = null; localStorage.removeItem(TOKEN_KEY);
       setSyncState('error'); showAuth();
     } else { setSyncState('error'); }
   }
 }
 
-// ── SHEETS API ─────────────────────────────────────────────
-async function sheetsGet(range) {
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!r.ok) throw new Error(`SheetsGet ${r.status}`);
-  return r.json();
-}
-async function sheetsAppend(tab, values) {
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(tab+'!A1')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-    { method:'POST', headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' }, body:JSON.stringify({ values }) }
-  );
-  if (!r.ok) throw new Error(`SheetsAppend ${r.status}`);
-  return r.json();
-}
-async function sheetsUpdate(range, values) {
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
-    { method:'PUT', headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' }, body:JSON.stringify({ values }) }
-  );
-  if (!r.ok) throw new Error(`SheetsUpdate ${r.status}`);
-  return r.json();
-}
-
-async function ensureTab(title) {
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(title+'!A1')}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (r.ok) return;
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`, {
+// ── APPS SCRIPT API ────────────────────────────────────────
+async function apiCall(action, extra = {}) {
+  const r = await fetch(SCRIPT_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] })
+    body: JSON.stringify({ token: accessToken, action, ...extra })
   });
+  if (!r.ok) throw new Error(`API ${r.status}`);
+  const result = await r.json();
+  if (result.error && result.error !== 'Access denied') throw new Error(result.error);
+  return result;
 }
 
-async function ensureHeaders() {
-  await ensureTab(DEBTS_TAB);
-  await ensureTab(PAYMENTS_TAB);
-  await ensureTab(USERS_TAB);
-  const d = await sheetsGet(`${DEBTS_TAB}!A1:E1`);
-  if (!d.values) await sheetsAppend(DEBTS_TAB, [['id','name','total_installments','start_date','description']]);
-  const p = await sheetsGet(`${PAYMENTS_TAB}!A1:J1`);
-  if (!p.values) await sheetsAppend(PAYMENTS_TAB, [['id','debt_id','date','amount','method','payment_number','file_name','file_url','drive_file_id','notes']]);
-  const u = await sheetsGet(`${USERS_TAB}!A1:C1`);
-  if (!u.values) await sheetsAppend(USERS_TAB, [['email','role','allowed_debt_ids']]);
-}
-
-// ── DRIVE API ──────────────────────────────────────────────
+// ── DRIVE API (user's own Drive, unchanged) ────────────────
 async function uploadToDrive(file) {
   const meta = JSON.stringify({ name: file.name, mimeType: file.type });
   const body = new FormData();
@@ -533,7 +472,6 @@ async function uploadToDrive(file) {
   );
   if (!r.ok) throw new Error(`Drive upload ${r.status}`);
   const data = await r.json();
-  // Make publicly readable
   await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
     method:'POST',
     headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' },
@@ -542,79 +480,12 @@ async function uploadToDrive(file) {
   return { id: data.id, name: data.name, url: `https://drive.google.com/file/d/${data.id}/view` };
 }
 
-// ── LOAD DATA ──────────────────────────────────────────────
-async function loadAll() { await Promise.all([loadDebts(), loadPayments(), loadUsers()]); }
-
-async function loadUsers() {
-  const data = await sheetsGet(`${USERS_TAB}!A:C`);
-  allUsers = []; userRowMap = {};
-  const rows = data.values || [];
-  for (let i = 1; i < rows.length; i++) {
-    const [email, role, debtIdsRaw] = rows[i];
-    if (!email) continue;
-    const debtIds = debtIdsRaw ? debtIdsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-    allUsers.push({ email, role: role||'viewer', debtIds });
-    userRowMap[email] = i + 1;
-  }
-}
-
-async function saveUserToSheets(u) {
-  const row = [u.email, u.role, u.debtIds.join(',')];
-  if (userRowMap[u.email]) {
-    await sheetsUpdate(`${USERS_TAB}!A${userRowMap[u.email]}:C${userRowMap[u.email]}`, [row]);
-  } else {
-    await sheetsAppend(USERS_TAB, [row]);
-    await loadUsers();
-  }
-}
-
-async function loadDebts() {
-  const data = await sheetsGet(`${DEBTS_TAB}!A:E`);
-  allDebts = []; debtRowMap = {};
-  const rows = data.values || [];
-  for (let i = 1; i < rows.length; i++) {
-    const [id, name, total, startDate, desc] = rows[i];
-    if (!id) continue;
-    allDebts.push({ id, name:name||'', total:parseInt(total)||1, startDate:startDate||'', desc:desc||'' });
-    debtRowMap[id] = i + 1;
-  }
-}
-
-async function loadPayments() {
-  const data = await sheetsGet(`${PAYMENTS_TAB}!A:J`);
-  allPayments = []; paymentRowMap = {};
-  const rows = data.values || [];
-  for (let i = 1; i < rows.length; i++) {
-    const [id, debtId, date, amount, method, num, fileName, fileUrl, fileId, notes] = rows[i];
-    if (!id) continue;
-    allPayments.push({ id, debtId, date, amount:parseFloat(amount)||0, method:method||'', num:parseInt(num)||0, fileName:fileName||'', fileUrl:fileUrl||'', fileId:fileId||'', notes:notes||'' });
-    paymentRowMap[id] = i + 1;
-  }
-  allPayments.sort((a,b) => b.date.localeCompare(a.date));
-}
-
-// ── SAVE DATA ──────────────────────────────────────────────
-async function saveDebtToSheets(debt) {
-  const row = [debt.id, debt.name, debt.total, debt.startDate, debt.desc];
-  if (debtRowMap[debt.id]) {
-    await sheetsUpdate(`${DEBTS_TAB}!A${debtRowMap[debt.id]}:E${debtRowMap[debt.id]}`, [row]);
-  } else {
-    await sheetsAppend(DEBTS_TAB, [row]);
-    await loadDebts();
-  }
-}
-async function savePaymentToSheets(p) {
-  const row = [p.id, p.debtId, p.date, p.amount, p.method, p.num, p.fileName, p.fileUrl, p.fileId, p.notes];
-  if (paymentRowMap[p.id]) {
-    await sheetsUpdate(`${PAYMENTS_TAB}!A${paymentRowMap[p.id]}:J${paymentRowMap[p.id]}`, [row]);
-  } else {
-    await sheetsAppend(PAYMENTS_TAB, [row]);
-    await loadPayments();
-  }
-}
-async function clearSheetRow(tab, rowNum) {
-  const cols = tab === DEBTS_TAB ? 5 : tab === USERS_TAB ? 3 : 10;
-  await sheetsUpdate(`${tab}!A${rowNum}:${String.fromCharCode(64+cols)}${rowNum}`, [Array(cols).fill('')]);
+// ── RELOAD ─────────────────────────────────────────────────
+async function reloadAll() {
+  const data = await apiCall('load');
+  allDebts    = data.debts    || [];
+  allPayments = (data.payments || []).sort((a,b) => b.date.localeCompare(a.date));
+  allUsers    = data.users    || [];
 }
 
 // ── VIEWS ──────────────────────────────────────────────────
@@ -633,14 +504,9 @@ function renderCurrentView() {
 }
 
 // ── RENDER: SUMMARY ────────────────────────────────────────
-function visibleDebts() {
-  if (!currentUserDebts) return allDebts;
-  return allDebts.filter(d => currentUserDebts.includes(d.id));
-}
-function visiblePayments() {
-  const vIds = new Set(visibleDebts().map(d => d.id));
-  return allPayments.filter(p => vIds.has(p.debtId));
-}
+// Server already filtered data to what this user can see
+function visibleDebts()    { return allDebts; }
+function visiblePayments() { return allPayments; }
 const isOwner = () => currentUserRole === 'owner';
 
 function renderSummary() {
@@ -883,17 +749,15 @@ async function saveDebt() {
   const start  = document.getElementById('debt-start-date').value;
   const desc   = document.getElementById('debt-desc').value.trim();
   const editId = document.getElementById('debt-editing-id').value;
-  if (!name)           { toast('Debt name is required'); return; }
+  if (!name)            { toast('Debt name is required'); return; }
   if (!total || total<1){ toast('Enter valid installment count'); return; }
   setSyncState('syncing');
   try {
-    if (editId) {
-      const idx = allDebts.findIndex(d => d.id===editId);
-      if (idx>=0) { allDebts[idx] = {...allDebts[idx], name, total, startDate:start, desc}; await saveDebtToSheets(allDebts[idx]); }
-    } else {
-      const debt = { id:genId(), name, total, startDate:start, desc };
-      allDebts.push(debt); await saveDebtToSheets(debt);
-    }
+    const debt = editId
+      ? { ...(allDebts.find(d=>d.id===editId)||{}), name, total, startDate:start, desc }
+      : { id:genId(), name, total, startDate:start, desc };
+    await apiCall('saveDebt', { data: debt });
+    await reloadAll();
     setSyncState('synced'); closeModal('modal-debt'); renderCurrentView(); toast('Debt saved ✓');
   } catch(e) { console.error(e); setSyncState('error'); toast('Save failed — check connection'); }
 }
@@ -903,12 +767,8 @@ async function deleteDebt(id) {
   if (!confirm(`Delete "${debt.name}"${hasPays?' and all its payments':''}? This cannot be undone.`)) return;
   setSyncState('syncing');
   try {
-    if (debtRowMap[id]) await clearSheetRow(DEBTS_TAB, debtRowMap[id]);
-    for (const p of allPayments.filter(p => p.debtId===id)) {
-      if (paymentRowMap[p.id]) await clearSheetRow(PAYMENTS_TAB, paymentRowMap[p.id]);
-    }
-    allDebts = allDebts.filter(d => d.id!==id);
-    allPayments = allPayments.filter(p => p.debtId!==id);
+    await apiCall('deleteDebt', { id });
+    await reloadAll();
     setSyncState('synced'); renderCurrentView(); toast('Debt deleted');
   } catch(e) { console.error(e); setSyncState('error'); toast('Delete failed'); }
 }
@@ -939,18 +799,16 @@ function renderDebtCheckboxes(selected) {
     </label>`).join('');
 }
 async function saveUser() {
-  const email   = document.getElementById('user-email').value.trim().toLowerCase();
+  const email     = document.getElementById('user-email').value.trim().toLowerCase();
   const editEmail = document.getElementById('user-editing-email').value;
-  const checked = [...document.querySelectorAll('#user-debt-checks input:checked')].map(i => i.value);
-  if (!email) { toast('Email is required'); return; }
-  if (!email.includes('@')) { toast('Enter a valid email'); return; }
-  if (email === OWNER_EMAIL) { toast('That is the owner account'); return; }
+  const checked   = [...document.querySelectorAll('#user-debt-checks input:checked')].map(i => i.value);
+  if (!email)              { toast('Email is required'); return; }
+  if (!email.includes('@')){ toast('Enter a valid email'); return; }
+  if (email === OWNER_EMAIL){ toast('That is the owner account'); return; }
   setSyncState('syncing');
   try {
-    const user = { email, role: 'viewer', debtIds: checked };
-    const idx = allUsers.findIndex(u => u.email === email);
-    if (idx >= 0) allUsers[idx] = user; else allUsers.push(user);
-    await saveUserToSheets(user);
+    await apiCall('saveUser', { data: { email, role:'viewer', debtIds: checked } });
+    await reloadAll();
     setSyncState('synced'); closeModal('modal-user'); renderCurrentView();
     toast(editEmail ? 'User updated ✓' : 'User added ✓');
   } catch(e) { console.error(e); setSyncState('error'); toast('Save failed'); }
@@ -959,8 +817,8 @@ async function deleteUser(email) {
   if (!confirm(`Remove ${email}?`)) return;
   setSyncState('syncing');
   try {
-    if (userRowMap[email]) await clearSheetRow(USERS_TAB, userRowMap[email]);
-    allUsers = allUsers.filter(u => u.email !== email);
+    await apiCall('deleteUser', { targetEmail: email });
+    await reloadAll();
     setSyncState('synced'); renderCurrentView(); toast('User removed');
   } catch(e) { console.error(e); setSyncState('error'); toast('Delete failed'); }
 }
@@ -1013,14 +871,16 @@ async function deletePayment(id) {
   if (!confirm(`Delete ₱${fmt(p.amount)} payment on ${fmtDate(p.date)} for "${debt?.name||'this debt'}"?`)) return;
   setSyncState('syncing');
   try {
-    if (paymentRowMap[id]) await clearSheetRow(PAYMENTS_TAB, paymentRowMap[id]);
-    allPayments = allPayments.filter(x => x.id !== id);
+    await apiCall('deletePayment', { id });
     // Re-number remaining payments for this debt
-    const debtPays = allPayments.filter(x => x.debtId === p.debtId).sort((a,b) => a.date.localeCompare(b.date));
-    for (let i = 0; i < debtPays.length; i++) {
-      debtPays[i].num = i + 1;
-      await savePaymentToSheets(debtPays[i]);
+    const remaining = allPayments
+      .filter(x => x.id !== id && x.debtId === p.debtId)
+      .sort((a,b) => a.date.localeCompare(b.date));
+    for (let i = 0; i < remaining.length; i++) {
+      remaining[i].num = i + 1;
+      await apiCall('savePayment', { data: remaining[i] });
     }
+    await reloadAll();
     setSyncState('synced'); renderCurrentView(); toast('Payment deleted');
   } catch(e) { console.error(e); setSyncState('error'); toast('Delete failed'); }
 }
@@ -1056,29 +916,22 @@ async function savePayment() {
       document.getElementById('upload-info').style.display = 'none';
     }
     if (editId) {
-      // EDIT existing payment
-      const idx = allPayments.findIndex(x => x.id === editId);
-      if (idx >= 0) {
-        const existing = allPayments[idx];
-        allPayments[idx] = {
-          ...existing, debtId, date, amount, method, notes,
-          fileName: file ? fileName : existing.fileName,
-          fileUrl:  file ? fileUrl  : existing.fileUrl,
-          fileId:   file ? fileId   : existing.fileId,
-        };
-        allPayments.sort((a,b) => b.date.localeCompare(a.date));
-        await savePaymentToSheets(allPayments[idx]);
-      }
+      const existing = allPayments.find(x => x.id === editId) || {};
+      const updated  = {
+        ...existing, debtId, date, amount, method, notes,
+        fileName: file ? fileName : existing.fileName,
+        fileUrl:  file ? fileUrl  : existing.fileUrl,
+        fileId:   file ? fileId   : existing.fileId,
+      };
+      await apiCall('savePayment', { data: updated });
+      await reloadAll();
       setSyncState('synced'); closeModal('modal-payment'); renderCurrentView();
       toast('Payment updated ✓');
     } else {
-      // NEW payment
-      const debtPays = allPayments.filter(p => p.debtId===debtId);
-      const num = debtPays.length + 1;
+      const num     = allPayments.filter(p => p.debtId===debtId).length + 1;
       const payment = { id:genId(), debtId, date, amount, method, num, fileName, fileUrl, fileId, notes };
-      allPayments.unshift(payment);
-      allPayments.sort((a,b) => b.date.localeCompare(a.date));
-      await savePaymentToSheets(payment);
+      await apiCall('savePayment', { data: payment });
+      await reloadAll();
       const debt = allDebts.find(d => d.id===debtId);
       setSyncState('synced'); closeModal('modal-payment'); renderCurrentView();
       toast(`Payment ${num} of ${debt?.total||'?'} saved ✓`);
