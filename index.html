@@ -187,9 +187,10 @@
       <div class="stats-grid" id="summary-stats"></div>
       <div class="section-header">
         <span class="section-title">Your Debts</span>
-        <button class="btn btn-ghost btn-sm" onclick="openAddDebt()">+ New Debt</button>
+        <button id="new-debt-btn" class="btn btn-ghost btn-sm" onclick="openAddDebt()">+ New Debt</button>
       </div>
       <div id="debt-list"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+      <div id="user-management"></div>
     </div>
 
     <!-- CALENDAR VIEW -->
@@ -331,6 +332,27 @@
   </div>
 </div>
 
+<!-- MODAL: Add/Edit User -->
+<div class="modal-overlay" id="modal-user">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="user-modal-title">Add User</div>
+    <div class="form-group">
+      <label>Gmail Address</label>
+      <input type="email" id="user-email" placeholder="friend@gmail.com">
+    </div>
+    <div class="form-group">
+      <label>Visible Debts <span style="color:var(--muted);font-size:.65rem">(leave all unchecked = access to all)</span></label>
+      <div id="user-debt-checks" style="padding:.25rem 0"></div>
+    </div>
+    <div style="display:flex;gap:.75rem;margin-top:.5rem">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-user')">Cancel</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveUser()">Save User</button>
+    </div>
+    <input type="hidden" id="user-editing-email">
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -339,19 +361,26 @@ const CLIENT_ID    = '1016619293334-ch6q469ml4n0taasgb4eo7o9tk1mkegk.apps.google
 const SHEET_ID     = '1Cb6aVmMojV27sLS1O_W_EZkhZndWgwU88UtYUZI9sxo';
 const DEBTS_TAB    = 'Debts';
 const PAYMENTS_TAB = 'Payments';
+const USERS_TAB    = 'Users';
+const OWNER_EMAIL  = 'felipe.jacob.g@gmail.com';
 const TOKEN_KEY    = 'debt_gtoken';
-const SCOPES       = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
+const SCOPES       = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
 
 // ── STATE ──────────────────────────────────────────────────
-let accessToken   = null;
-let tokenClient   = null;
-let allDebts      = [];  // {id, name, total, startDate, desc}
-let allPayments   = [];  // {id, debtId, date, amount, method, num, fileName, fileUrl, fileId, notes}
-let debtRowMap    = {};  // id → sheet row (1-based)
-let paymentRowMap = {};  // id → sheet row (1-based)
+let accessToken      = null;
+let tokenClient      = null;
+let allDebts         = [];  // {id, name, total, startDate, desc}
+let allPayments      = [];  // {id, debtId, date, amount, method, num, fileName, fileUrl, fileId, notes}
+let allUsers         = [];  // {email, role, debtIds[]}
+let debtRowMap       = {};  // id → sheet row (1-based)
+let paymentRowMap    = {};  // id → sheet row (1-based)
+let userRowMap       = {};  // email → sheet row (1-based)
 let calYear, calMonth;
-let activeFilter  = 'all';
-let currentView   = 'summary';
+let activeFilter     = 'all';
+let currentView      = 'summary';
+let currentUserEmail = null;
+let currentUserRole  = 'viewer'; // 'owner' | 'viewer'
+let currentUserDebts = null;     // null = all, array of IDs = restricted
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -399,11 +428,37 @@ function setSyncState(s) {
   document.getElementById('sync-label').textContent = l[s] || l.offline;
 }
 
+async function fetchCurrentUserEmail() {
+  const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!r.ok) throw new Error(`UserInfo ${r.status}`);
+  const d = await r.json();
+  return d.email || null;
+}
+
 async function onSignedIn() {
   showApp(); setSyncState('syncing');
   try {
+    currentUserEmail = await fetchCurrentUserEmail();
     await ensureHeaders();
     await loadAll();
+    // Determine role
+    if (currentUserEmail === OWNER_EMAIL) {
+      currentUserRole  = 'owner';
+      currentUserDebts = null;
+      // Auto-register owner in Users tab if not present
+      if (!allUsers.find(u => u.email === OWNER_EMAIL)) {
+        const ownerUser = { email: OWNER_EMAIL, role: 'owner', debtIds: [] };
+        allUsers.push(ownerUser);
+        await saveUserToSheets(ownerUser);
+      }
+    } else {
+      const u = allUsers.find(u => u.email === currentUserEmail);
+      if (!u) { setSyncState('error'); showAuth(); alert('Access denied. Ask the owner to add you as a user.'); return; }
+      currentUserRole  = u.role;
+      currentUserDebts = u.debtIds.length ? u.debtIds : null;
+    }
     setSyncState('synced');
     renderCurrentView();
   } catch(e) {
@@ -457,10 +512,13 @@ async function ensureTab(title) {
 async function ensureHeaders() {
   await ensureTab(DEBTS_TAB);
   await ensureTab(PAYMENTS_TAB);
+  await ensureTab(USERS_TAB);
   const d = await sheetsGet(`${DEBTS_TAB}!A1:E1`);
   if (!d.values) await sheetsAppend(DEBTS_TAB, [['id','name','total_installments','start_date','description']]);
   const p = await sheetsGet(`${PAYMENTS_TAB}!A1:J1`);
   if (!p.values) await sheetsAppend(PAYMENTS_TAB, [['id','debt_id','date','amount','method','payment_number','file_name','file_url','drive_file_id','notes']]);
+  const u = await sheetsGet(`${USERS_TAB}!A1:C1`);
+  if (!u.values) await sheetsAppend(USERS_TAB, [['email','role','allowed_debt_ids']]);
 }
 
 // ── DRIVE API ──────────────────────────────────────────────
@@ -485,7 +543,30 @@ async function uploadToDrive(file) {
 }
 
 // ── LOAD DATA ──────────────────────────────────────────────
-async function loadAll() { await Promise.all([loadDebts(), loadPayments()]); }
+async function loadAll() { await Promise.all([loadDebts(), loadPayments(), loadUsers()]); }
+
+async function loadUsers() {
+  const data = await sheetsGet(`${USERS_TAB}!A:C`);
+  allUsers = []; userRowMap = {};
+  const rows = data.values || [];
+  for (let i = 1; i < rows.length; i++) {
+    const [email, role, debtIdsRaw] = rows[i];
+    if (!email) continue;
+    const debtIds = debtIdsRaw ? debtIdsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+    allUsers.push({ email, role: role||'viewer', debtIds });
+    userRowMap[email] = i + 1;
+  }
+}
+
+async function saveUserToSheets(u) {
+  const row = [u.email, u.role, u.debtIds.join(',')];
+  if (userRowMap[u.email]) {
+    await sheetsUpdate(`${USERS_TAB}!A${userRowMap[u.email]}:C${userRowMap[u.email]}`, [row]);
+  } else {
+    await sheetsAppend(USERS_TAB, [row]);
+    await loadUsers();
+  }
+}
 
 async function loadDebts() {
   const data = await sheetsGet(`${DEBTS_TAB}!A:E`);
@@ -532,7 +613,7 @@ async function savePaymentToSheets(p) {
   }
 }
 async function clearSheetRow(tab, rowNum) {
-  const cols = tab === DEBTS_TAB ? 5 : 10;
+  const cols = tab === DEBTS_TAB ? 5 : tab === USERS_TAB ? 3 : 10;
   await sheetsUpdate(`${tab}!A${rowNum}:${String.fromCharCode(64+cols)}${rowNum}`, [Array(cols).fill('')]);
 }
 
@@ -552,59 +633,113 @@ function renderCurrentView() {
 }
 
 // ── RENDER: SUMMARY ────────────────────────────────────────
+function visibleDebts() {
+  if (!currentUserDebts) return allDebts;
+  return allDebts.filter(d => currentUserDebts.includes(d.id));
+}
+function visiblePayments() {
+  const vIds = new Set(visibleDebts().map(d => d.id));
+  return allPayments.filter(p => vIds.has(p.debtId));
+}
+const isOwner = () => currentUserRole === 'owner';
+
 function renderSummary() {
-  const totalPaid = allPayments.reduce((s,p) => s+p.amount, 0);
-  const lastP = allPayments[0];
+  const myDebts    = visibleDebts();
+  const myPayments = visiblePayments();
+  const totalPaid  = myPayments.reduce((s,p) => s+p.amount, 0);
+  const lastP      = myPayments[0];
+
   document.getElementById('summary-stats').innerHTML = `
     <div class="stat-card">
       <div class="stat-label">Total Paid</div>
       <div class="stat-value">₱${fmt(totalPaid)}</div>
-      <div class="stat-sub">${allPayments.length} payment${allPayments.length!==1?'s':''}</div>
+      <div class="stat-sub">${myPayments.length} payment${myPayments.length!==1?'s':''}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Active Debts</div>
-      <div class="stat-value">${allDebts.length}</div>
+      <div class="stat-label">${isOwner()?'Active Debts':'My Debts'}</div>
+      <div class="stat-value">${myDebts.length}</div>
       <div class="stat-sub">${lastP ? 'Last: '+fmtDate(lastP.date) : 'No payments yet'}</div>
     </div>`;
 
-  if (!allDebts.length) {
-    document.getElementById('debt-list').innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">No debts yet.<br>Tap <strong>+ New Debt</strong> to get started.</div></div>`;
-    return;
-  }
-  document.getElementById('debt-list').innerHTML = allDebts.map(debt => {
-    const pays = allPayments.filter(p => p.debtId === debt.id);
-    const paid = pays.length;
-    const pct  = Math.min(100, Math.round((paid/debt.total)*100));
-    const totalPaidDebt = pays.reduce((s,p) => s+p.amount, 0);
-    const lastPay = pays.sort((a,b) => b.date.localeCompare(a.date))[0];
-    const done = paid >= debt.total;
-    return `<div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.75rem">
-        <div>
-          <div class="card-title">${esc(debt.name)}</div>
-          ${debt.desc ? `<div class="notes-text">${esc(debt.desc)}</div>` : ''}
-        </div>
-        <div class="debt-badge ${done?'done':''}">${done ? '✓ Complete' : `${paid} / ${debt.total}`}</div>
-      </div>
-      <div class="progress-wrap">
-        <div class="progress-label"><span>Payment ${paid} of ${debt.total}</span><span>${pct}%</span></div>
-        <div class="progress-bar"><div class="progress-fill ${done?'done':''}" style="width:${pct}%"></div></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-top:.5rem">
-        <span>Total paid: <span style="color:var(--accent)">₱${fmt(totalPaidDebt)}</span></span>
-        <span>${lastPay ? 'Last: '+fmtDate(lastPay.date) : 'No payments'}</span>
-      </div>
-      <div class="debt-actions">
-        <button class="btn btn-primary btn-sm" style="flex:1" onclick="openAddPayment('${debt.id}')">+ Log Payment</button>
+  // Owner controls: New Debt button + User Management
+  document.getElementById('new-debt-btn').style.display = isOwner() ? '' : 'none';
+
+  if (!myDebts.length) {
+    document.getElementById('debt-list').innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">${isOwner() ? 'No debts yet.<br>Tap <strong>+ New Debt</strong> to get started.' : 'No debts assigned to you yet.'}</div></div>`;
+  } else {
+    document.getElementById('debt-list').innerHTML = myDebts.map(debt => {
+      const pays = myPayments.filter(p => p.debtId === debt.id);
+      const paid = pays.length;
+      const pct  = Math.min(100, Math.round((paid/debt.total)*100));
+      const totalPaidDebt = pays.reduce((s,p) => s+p.amount, 0);
+      const lastPay = pays.sort((a,b) => b.date.localeCompare(a.date))[0];
+      const done = paid >= debt.total;
+      const ownerActions = isOwner() ? `
         <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditDebt('${debt.id}')" title="Edit">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 1 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
         <button class="btn btn-secondary btn-sm btn-icon" onclick="deleteDebt('${debt.id}')" title="Delete">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-        </button>
-      </div>
-    </div>`;
-  }).join('');
+        </button>` : '';
+      return `<div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.75rem">
+          <div>
+            <div class="card-title">${esc(debt.name)}</div>
+            ${debt.desc ? `<div class="notes-text">${esc(debt.desc)}</div>` : ''}
+          </div>
+          <div class="debt-badge ${done?'done':''}">${done ? '✓ Complete' : `${paid} / ${debt.total}`}</div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-label"><span>Payment ${paid} of ${debt.total}</span><span>${pct}%</span></div>
+          <div class="progress-bar"><div class="progress-fill ${done?'done':''}" style="width:${pct}%"></div></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-top:.5rem">
+          <span>Total paid: <span style="color:var(--accent)">₱${fmt(totalPaidDebt)}</span></span>
+          <span>${lastPay ? 'Last: '+fmtDate(lastPay.date) : 'No payments'}</span>
+        </div>
+        <div class="debt-actions">
+          <button class="btn btn-primary btn-sm" style="flex:1" onclick="openAddPayment('${debt.id}')">+ Log Payment</button>
+          ${ownerActions}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // User management section (owner only)
+  const umEl = document.getElementById('user-management');
+  if (!isOwner()) { umEl.style.display = 'none'; return; }
+  umEl.style.display = '';
+  const viewers = allUsers.filter(u => u.email !== OWNER_EMAIL);
+  umEl.innerHTML = `
+    <div class="divider"></div>
+    <div class="section-header">
+      <span class="section-title">Users</span>
+      <button class="btn btn-ghost btn-sm" onclick="openAddUser()">+ Add User</button>
+    </div>
+    ${!viewers.length
+      ? `<div class="empty-state" style="padding:1rem 0"><div class="empty-text">No shared users yet.</div></div>`
+      : viewers.map(u => {
+          const names = u.debtIds.length
+            ? u.debtIds.map(id => allDebts.find(d=>d.id===id)?.name||id).join(', ')
+            : 'All debts';
+          return `<div class="card" style="margin-bottom:.5rem">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div>
+                <div style="font-size:.85rem;font-weight:500">${esc(u.email)}</div>
+                <div class="notes-text" style="margin-top:.2rem">Access: ${esc(names)}</div>
+              </div>
+              <div style="display:flex;gap:.4rem">
+                <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditUser('${esc(u.email)}')" title="Edit">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 1 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button class="btn btn-secondary btn-sm btn-icon" onclick="deleteUser('${esc(u.email)}')" title="Remove">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>`;
+        }).join('')
+    }`;
 }
 
 // ── RENDER: CALENDAR ───────────────────────────────────────
@@ -616,7 +751,8 @@ function renderCalendar() {
   const n = new Date();
   const todayStr = isoDate(n);
   const prefix = `${calYear}-${pad(calMonth+1)}`;
-  const payDates = new Set(allPayments.filter(p => p.date.startsWith(prefix)).map(p => p.date));
+  const myPays = visiblePayments();
+  const payDates = new Set(myPays.filter(p => p.date.startsWith(prefix)).map(p => p.date));
 
   let html = DAYS.map(d => `<div class="cal-dow">${d}</div>`).join('');
   for (let i=0; i<firstDay; i++) html += `<div class="cal-day empty"></div>`;
@@ -630,7 +766,7 @@ function renderCalendar() {
   }
   document.getElementById('cal-grid').innerHTML = html;
 
-  const monthPays = allPayments.filter(p => p.date.startsWith(prefix));
+  const monthPays = myPays.filter(p => p.date.startsWith(prefix));
   const el = document.getElementById('cal-month-payments');
   if (!monthPays.length) {
     el.innerHTML = `<div class="empty-state" style="padding:1.5rem 0"><div class="empty-text">No payments in ${MONTHS[calMonth]} ${calYear}</div></div>`;
@@ -644,7 +780,7 @@ function calPrev() { if (calMonth===0){calMonth=11;calYear--;}else calMonth--; r
 function calNext() { if (calMonth===11){calMonth=0;calYear++;}else calMonth++; renderCalendar(); }
 
 function dayClick(dateStr) {
-  const pays = allPayments.filter(p => p.date === dateStr);
+  const pays = visiblePayments().filter(p => p.date === dateStr);
   if (!pays.length) return;
   document.getElementById('day-modal-title').textContent = fmtDate(dateStr);
   document.getElementById('day-modal-content').innerHTML = pays.map(p => {
@@ -667,12 +803,14 @@ function dayClick(dateStr) {
 
 // ── RENDER: PAYMENTS ───────────────────────────────────────
 function renderPayments() {
+  const myDebts    = visibleDebts();
+  const myPayments = visiblePayments();
   const chips = ['<div class="filter-chip '+(activeFilter==='all'?'active':'')+'" onclick="setFilter(\'all\')">All</div>',
-    ...allDebts.map(d => `<div class="filter-chip ${activeFilter===d.id?'active':''}" onclick="setFilter('${d.id}')">${esc(d.name)}</div>`)
+    ...myDebts.map(d => `<div class="filter-chip ${activeFilter===d.id?'active':''}" onclick="setFilter('${d.id}')">${esc(d.name)}</div>`)
   ].join('');
   document.getElementById('payments-filter').innerHTML = chips;
 
-  const filtered = activeFilter==='all' ? allPayments : allPayments.filter(p => p.debtId===activeFilter);
+  const filtered = activeFilter==='all' ? myPayments : myPayments.filter(p => p.debtId===activeFilter);
   if (!filtered.length) {
     document.getElementById('payments-list').innerHTML = `<div class="empty-state"><div class="empty-icon">💳</div><div class="empty-text">No payments yet.</div></div>`;
     return;
@@ -772,6 +910,58 @@ async function deleteDebt(id) {
     allDebts = allDebts.filter(d => d.id!==id);
     allPayments = allPayments.filter(p => p.debtId!==id);
     setSyncState('synced'); renderCurrentView(); toast('Debt deleted');
+  } catch(e) { console.error(e); setSyncState('error'); toast('Delete failed'); }
+}
+
+// ── USER MANAGEMENT ───────────────────────────────────────
+function openAddUser() {
+  document.getElementById('user-modal-title').textContent = 'Add User';
+  document.getElementById('user-email').value = '';
+  document.getElementById('user-email').disabled = false;
+  document.getElementById('user-editing-email').value = '';
+  renderDebtCheckboxes([]);
+  openModal('modal-user');
+}
+function openEditUser(email) {
+  const u = allUsers.find(x => x.email === email); if (!u) return;
+  document.getElementById('user-modal-title').textContent = 'Edit User';
+  document.getElementById('user-email').value = email;
+  document.getElementById('user-email').disabled = true;
+  document.getElementById('user-editing-email').value = email;
+  renderDebtCheckboxes(u.debtIds);
+  openModal('modal-user');
+}
+function renderDebtCheckboxes(selected) {
+  document.getElementById('user-debt-checks').innerHTML = allDebts.map(d => `
+    <label style="display:flex;align-items:center;gap:.5rem;padding:.4rem 0;cursor:pointer;font-size:.8rem">
+      <input type="checkbox" value="${d.id}" ${selected.includes(d.id)?'checked':''} style="width:auto;accent-color:var(--accent)">
+      ${esc(d.name)}
+    </label>`).join('');
+}
+async function saveUser() {
+  const email   = document.getElementById('user-email').value.trim().toLowerCase();
+  const editEmail = document.getElementById('user-editing-email').value;
+  const checked = [...document.querySelectorAll('#user-debt-checks input:checked')].map(i => i.value);
+  if (!email) { toast('Email is required'); return; }
+  if (!email.includes('@')) { toast('Enter a valid email'); return; }
+  if (email === OWNER_EMAIL) { toast('That is the owner account'); return; }
+  setSyncState('syncing');
+  try {
+    const user = { email, role: 'viewer', debtIds: checked };
+    const idx = allUsers.findIndex(u => u.email === email);
+    if (idx >= 0) allUsers[idx] = user; else allUsers.push(user);
+    await saveUserToSheets(user);
+    setSyncState('synced'); closeModal('modal-user'); renderCurrentView();
+    toast(editEmail ? 'User updated ✓' : 'User added ✓');
+  } catch(e) { console.error(e); setSyncState('error'); toast('Save failed'); }
+}
+async function deleteUser(email) {
+  if (!confirm(`Remove ${email}?`)) return;
+  setSyncState('syncing');
+  try {
+    if (userRowMap[email]) await clearSheetRow(USERS_TAB, userRowMap[email]);
+    allUsers = allUsers.filter(u => u.email !== email);
+    setSyncState('synced'); renderCurrentView(); toast('User removed');
   } catch(e) { console.error(e); setSyncState('error'); toast('Delete failed'); }
 }
 
