@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>Debt Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0e0e11;
+      --surface: #16161c;
+      --surface2: #1e1e27;
+      --border: #2a2a38;
+      --accent: #ff8800;
+      --accent-dim: rgba(255,136,0,0.15);
+      --accent2: #ff4d4d;
+      --accent3: #42b8ff;
+      --text: #f0f0f4;
+      --muted: #7a7a94;
+    }
+    body { background:var(--bg); color:var(--text); font-family:'DM Mono',monospace; min-height:100vh; }
+    h1,h2,h3,.syne { font-family:'Syne',sans-serif; }
+
+    /* NAV */
+    nav { position:fixed; bottom:0; left:0; right:0; background:var(--surface); border-top:1px solid var(--border); display:flex; justify-content:space-around; padding:.5rem 0 calc(.5rem + env(safe-area-inset-bottom)); z-index:100; }
+    .nav-btn { flex:1; display:flex; flex-direction:column; align-items:center; gap:.25rem; padding:.5rem; background:none; border:none; color:var(--muted); cursor:pointer; font-family:'DM Mono',monospace; font-size:.65rem; transition:color .2s; }
+    .nav-btn.active { color:var(--accent); }
+    .nav-btn svg { width:22px; height:22px; }
+
+    /* TOPBAR */
+    .topbar { position:fixed; top:0; left:0; right:0; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:.875rem 1rem; z-index:100; }
+    .topbar-title { font-family:'Syne',sans-serif; font-size:1.1rem; font-weight:700; letter-spacing:.05em; }
+    .sync-badge { display:flex; align-items:center; gap:.4rem; font-size:.7rem; color:var(--muted); cursor:pointer; padding:.25rem .5rem; border-radius:20px; border:1px solid var(--border); }
+    .sync-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+
+    /* MAIN */
+    main { padding:5rem 1rem 5.5rem; max-width:600px; margin:0 auto; }
+    .view { display:none; }
+    .view.active { display:block; }
+
+    /* CARDS */
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1rem; margin-bottom:.75rem; }
+    .card-title { font-family:'Syne',sans-serif; font-size:1rem; font-weight:600; }
+
+    /* PROGRESS */
+    .progress-wrap { margin:.5rem 0; }
+    .progress-label { display:flex; justify-content:space-between; font-size:.7rem; color:var(--muted); margin-bottom:.3rem; }
+    .progress-bar { height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; }
+    .progress-fill { height:100%; background:var(--accent); border-radius:3px; transition:width .5s ease; }
+    .progress-fill.done { background:#6bff9e; }
+
+    /* BUTTONS */
+    .btn { display:inline-flex; align-items:center; gap:.4rem; padding:.5rem 1rem; border-radius:8px; border:none; cursor:pointer; font-family:'DM Mono',monospace; font-size:.8rem; font-weight:500; transition:opacity .2s, transform .1s; }
+    .btn:active { transform:scale(.97); }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn-primary { background:var(--accent); color:#000; }
+    .btn-secondary { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+    .btn-ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+    .btn-sm { padding:.35rem .75rem; font-size:.75rem; }
+    .btn-full { width:100%; justify-content:center; }
+    .btn-icon { padding:.4rem; border-radius:6px; }
+
+    /* FAB */
+    .fab { position:fixed; bottom:5rem; right:1rem; width:52px; height:52px; border-radius:50%; background:var(--accent); border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 16px rgba(255,136,0,.4); z-index:90; transition:transform .2s; }
+    .fab:active { transform:scale(.93); }
+
+    /* FORM */
+    .form-group { margin-bottom:1rem; }
+    label { display:block; font-size:.72rem; color:var(--muted); margin-bottom:.4rem; letter-spacing:.05em; text-transform:uppercase; }
+    input, select, textarea { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:.6rem .75rem; color:var(--text); font-family:'DM Mono',monospace; font-size:.875rem; outline:none; transition:border-color .2s; }
+    input:focus, select:focus, textarea:focus { border-color:var(--accent); }
+    select option { background:var(--surface2); }
+    textarea { resize:vertical; }
+
+    /* FILE INPUT */
+    .file-wrap { position:relative; }
+    .file-wrap input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+    .file-label { display:flex; align-items:center; gap:.5rem; padding:.6rem .75rem; background:var(--surface2); border:1px dashed var(--border); border-radius:8px; color:var(--muted); font-size:.8rem; cursor:pointer; transition:border-color .2s, color .2s; }
+    .file-label.has-file { border-color:var(--accent); color:var(--accent); }
+
+    /* MODAL */
+    .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:200; align-items:flex-end; justify-content:center; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:var(--surface); border-radius:20px 20px 0 0; padding:1.25rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom)); width:100%; max-width:600px; max-height:90vh; overflow-y:auto; animation:slideUp .3s ease; }
+    @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
+    .modal-handle { width:36px; height:4px; background:var(--border); border-radius:2px; margin:0 auto 1rem; }
+    .modal-title { font-family:'Syne',sans-serif; font-size:1.1rem; font-weight:600; margin-bottom:1.25rem; }
+
+    /* CALENDAR */
+    .cal-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; }
+    .cal-month-label { font-family:'Syne',sans-serif; font-size:1rem; font-weight:600; }
+    .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+    .cal-dow { text-align:center; font-size:.65rem; color:var(--muted); padding:.25rem 0; text-transform:uppercase; }
+    .cal-day { aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:8px; font-size:.8rem; cursor:pointer; position:relative; transition:background .15s; }
+    .cal-day:hover { background:var(--surface2); }
+    .cal-day.empty { cursor:default; pointer-events:none; }
+    .cal-day.today { color:var(--accent); font-weight:600; }
+    .cal-day.has-payment { background:var(--accent-dim); }
+    .cal-day.has-payment span { color:var(--accent); }
+    .cal-pay-dot { position:absolute; bottom:3px; width:4px; height:4px; border-radius:50%; background:var(--accent); }
+
+    /* PAYMENT ITEM */
+    .payment-item { display:flex; gap:.75rem; padding:.875rem; background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:.5rem; }
+    .pay-icon { width:36px; height:36px; border-radius:8px; background:var(--accent-dim); display:flex; align-items:center; justify-content:center; color:var(--accent); flex-shrink:0; }
+    .pay-info { flex:1; min-width:0; }
+    .pay-top { display:flex; justify-content:space-between; align-items:flex-start; }
+    .pay-name { font-family:'Syne',sans-serif; font-size:.875rem; font-weight:600; }
+    .pay-amount { font-size:.875rem; color:var(--accent); white-space:nowrap; margin-left:.5rem; }
+    .pay-meta { font-size:.7rem; color:var(--muted); margin-top:.25rem; display:flex; gap:.4rem; flex-wrap:wrap; align-items:center; }
+    .tag { display:inline-flex; align-items:center; padding:.15rem .5rem; border-radius:20px; font-size:.65rem; background:var(--surface2); border:1px solid var(--border); color:var(--muted); }
+
+    /* STATS */
+    .stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; margin-bottom:1rem; }
+    .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1rem; }
+    .stat-label { font-size:.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:.4rem; }
+    .stat-value { font-family:'Syne',sans-serif; font-size:1.4rem; font-weight:700; color:var(--accent); }
+    .stat-sub { font-size:.7rem; color:var(--muted); margin-top:.2rem; }
+
+    /* SECTION HEADER */
+    .section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:.875rem; }
+    .section-title { font-family:'Syne',sans-serif; font-size:.875rem; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+
+    /* FILTER */
+    .filter-bar { display:flex; gap:.5rem; margin-bottom:1rem; overflow-x:auto; padding-bottom:.25rem; }
+    .filter-chip { flex-shrink:0; padding:.35rem .75rem; border-radius:20px; border:1px solid var(--border); background:var(--surface); color:var(--muted); font-size:.72rem; cursor:pointer; font-family:'DM Mono',monospace; transition:all .15s; }
+    .filter-chip.active { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+
+    /* EMPTY STATE */
+    .empty-state { text-align:center; padding:3rem 1rem; color:var(--muted); }
+    .empty-icon { font-size:2.5rem; margin-bottom:.75rem; opacity:.4; }
+    .empty-text { font-size:.875rem; line-height:1.6; }
+
+    /* MISC */
+    .debt-badge { display:inline-flex; align-items:center; padding:.2rem .6rem; border-radius:20px; font-size:.65rem; background:var(--accent-dim); color:var(--accent); border:1px solid rgba(255,136,0,.3); }
+    .debt-badge.done { background:rgba(107,255,158,.15); color:#6bff9e; border-color:rgba(107,255,158,.3); }
+    .notes-text { font-size:.75rem; color:var(--muted); font-style:italic; margin-top:.25rem; }
+    .divider { height:1px; background:var(--border); margin:1rem 0; }
+    .input-row { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+    .debt-actions { display:flex; gap:.5rem; margin-top:.75rem; }
+    .receipt-link { display:inline-flex; align-items:center; gap:.3rem; color:var(--accent3); font-size:.7rem; text-decoration:none; }
+    .receipt-link:hover { text-decoration:underline; }
+    .upload-info { margin-top:.4rem; font-size:.72rem; color:var(--accent); display:none; }
+    .day-pay { padding:.75rem; background:var(--surface2); border-radius:8px; margin-bottom:.5rem; }
+    .spinner { width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    .loading { display:flex; align-items:center; justify-content:center; padding:2rem; color:var(--muted); font-size:.8rem; gap:.5rem; }
+    .toast { position:fixed; bottom:5.5rem; left:50%; transform:translateX(-50%) translateY(10px); background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:.5rem 1rem; font-size:.8rem; opacity:0; transition:opacity .3s, transform .3s; pointer-events:none; z-index:300; white-space:nowrap; }
+    .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+    ::-webkit-scrollbar { width:4px; }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+    .auth-screen { display:none; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:2rem; gap:1.5rem; text-align:center; }
+    .auth-logo { font-family:'Syne',sans-serif; font-size:2rem; font-weight:700; color:var(--accent); margin-bottom:.25rem; }
+    .auth-sub { color:var(--muted); font-size:.875rem; max-width:280px; line-height:1.6; }
+  </style>
+</head>
+<body>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen" class="auth-screen">
+  <div style="font-size:3rem">💳</div>
+  <div>
+    <div class="auth-logo">Debt Tracker</div>
+    <p class="auth-sub">Track installment payments, receipts, and progress — all in one place.</p>
+  </div>
+  <button class="btn btn-primary" onclick="signIn()">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+    Sign in with Google
+  </button>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none">
+
+  <div class="topbar">
+    <div class="topbar-title">💳 Debt Tracker</div>
+    <div class="sync-badge" onclick="syncBadgeClick()" id="sync-badge">
+      <div class="sync-dot" id="sync-dot"></div>
+      <span id="sync-label">not signed in</span>
+    </div>
+  </div>
+
+  <main>
+
+    <!-- SUMMARY VIEW -->
+    <div id="view-summary" class="view active">
+      <div class="stats-grid" id="summary-stats"></div>
+      <div class="section-header">
+        <span class="section-title">Your Debts</span>
+        <button class="btn btn-ghost btn-sm" onclick="openAddDebt()">+ New Debt</button>
+      </div>
+      <div id="debt-list"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+    </div>
+
+    <!-- CALENDAR VIEW -->
+    <div id="view-calendar" class="view">
+      <div class="cal-header">
+        <button class="btn btn-secondary btn-sm btn-icon" onclick="calPrev()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span class="cal-month-label" id="cal-label"></span>
+        <button class="btn btn-secondary btn-sm btn-icon" onclick="calNext()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+      <div class="divider"></div>
+      <div id="cal-month-payments"></div>
+    </div>
+
+    <!-- PAYMENTS VIEW -->
+    <div id="view-payments" class="view">
+      <div class="filter-bar" id="payments-filter"></div>
+      <div id="payments-list"></div>
+    </div>
+
+  </main>
+
+  <!-- FAB -->
+  <button class="fab" onclick="openAddPayment(null)" title="Log Payment">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+
+  <nav>
+    <button class="nav-btn active" id="nav-summary" onclick="showView('summary')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Summary
+    </button>
+    <button class="nav-btn" id="nav-calendar" onclick="showView('calendar')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Calendar
+    </button>
+    <button class="nav-btn" id="nav-payments" onclick="showView('payments')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Payments
+    </button>
+  </nav>
+</div>
+
+<!-- MODAL: Add/Edit Debt -->
+<div class="modal-overlay" id="modal-debt">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="debt-modal-title">New Debt</div>
+    <div class="form-group">
+      <label>Debt Name</label>
+      <input type="text" id="debt-name" placeholder="e.g. Laptop, Phone, Personal Loan...">
+    </div>
+    <div class="input-row">
+      <div class="form-group">
+        <label>Total Installments</label>
+        <input type="number" id="debt-installments" placeholder="36" min="1">
+      </div>
+      <div class="form-group">
+        <label>Start Date</label>
+        <input type="date" id="debt-start-date">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Description (optional)</label>
+      <textarea id="debt-desc" rows="2" placeholder="Notes about this debt..."></textarea>
+    </div>
+    <div style="display:flex;gap:.75rem;margin-top:.5rem">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-debt')">Cancel</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveDebt()">Save Debt</button>
+    </div>
+    <input type="hidden" id="debt-editing-id">
+  </div>
+</div>
+
+<!-- MODAL: Add Payment -->
+<div class="modal-overlay" id="modal-payment">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Log Payment</div>
+    <div class="form-group">
+      <label>Debt</label>
+      <select id="payment-debt-id"><option value="">Select debt...</option></select>
+    </div>
+    <div class="input-row">
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="payment-date">
+      </div>
+      <div class="form-group">
+        <label>Amount (₱)</label>
+        <input type="number" id="payment-amount" placeholder="0.00" min="0" step="0.01">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Payment Method</label>
+      <select id="payment-method">
+        <option value="">Select method...</option>
+        <option>Maya</option>
+        <option>GCash</option>
+        <option>BPI</option>
+        <option>Unionbank</option>
+        <option>Maribank</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Receipt / Attachment</label>
+      <div class="file-wrap">
+        <input type="file" id="payment-file" accept="image/*,.pdf" onchange="fileChanged(this)">
+        <div class="file-label" id="file-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          <span id="file-label-text">Attach image or PDF...</span>
+        </div>
+      </div>
+      <div class="upload-info" id="upload-info">⬆ Uploading to Drive...</div>
+    </div>
+    <div class="form-group">
+      <label>Notes (optional)</label>
+      <input type="text" id="payment-notes" placeholder="Reference no., remarks...">
+    </div>
+    <div style="display:flex;gap:.75rem;margin-top:.5rem">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-payment')">Cancel</button>
+      <button class="btn btn-primary" style="flex:2" id="save-pay-btn" onclick="savePayment()">Save Payment</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Day Detail -->
+<div class="modal-overlay" id="modal-day">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="day-modal-title"></div>
+    <div id="day-modal-content"></div>
+    <button class="btn btn-secondary btn-full" style="margin-top:.75rem" onclick="closeModal('modal-day')">Close</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── CONSTANTS ──────────────────────────────────────────────
+const CLIENT_ID    = '1016619293334-ch6q469ml4n0taasgb4eo7o9tk1mkegk.apps.googleusercontent.com';
+const SHEET_ID     = '1Cb6aVmMojV27sLS1O_W_EZkhZndWgwU88UtYUZI9sxo';
+const DEBTS_TAB    = 'Debts';
+const PAYMENTS_TAB = 'Payments';
+const TOKEN_KEY    = 'debt_gtoken';
+const SCOPES       = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
+
+// ── STATE ──────────────────────────────────────────────────
+let accessToken   = null;
+let tokenClient   = null;
+let allDebts      = [];  // {id, name, total, startDate, desc}
+let allPayments   = [];  // {id, debtId, date, amount, method, num, fileName, fileUrl, fileId, notes}
+let debtRowMap    = {};  // id → sheet row (1-based)
+let paymentRowMap = {};  // id → sheet row (1-based)
+let calYear, calMonth;
+let activeFilter  = 'all';
+let currentView   = 'summary';
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// ── AUTH ───────────────────────────────────────────────────
+function initGIS() {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback(resp) {
+      if (resp.error) { setSyncState('error'); return; }
+      accessToken = resp.access_token;
+      localStorage.setItem(TOKEN_KEY, accessToken);
+      onSignedIn();
+    }
+  });
+  const stored = localStorage.getItem(TOKEN_KEY);
+  if (stored) { accessToken = stored; onSignedIn(); }
+  else showAuth();
+}
+
+function signIn() { tokenClient.requestAccessToken({ prompt: 'consent' }); }
+function signOut() {
+  accessToken = null;
+  localStorage.removeItem(TOKEN_KEY);
+  allDebts = []; allPayments = [];
+  showAuth(); setSyncState('offline');
+}
+function syncBadgeClick() {
+  if (!accessToken) { signIn(); return; }
+  if (confirm('Sign out?')) signOut();
+}
+function showAuth() {
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+function showApp() {
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+function setSyncState(s) {
+  const c = { syncing:'#ffd86b', synced:'#6bff9e', error:'#ff4d4d', offline:'#555' };
+  const l = { syncing:'syncing...', synced:'synced', error:'token expired', offline:'not signed in' };
+  document.getElementById('sync-dot').style.background = c[s] || c.offline;
+  document.getElementById('sync-label').textContent = l[s] || l.offline;
+}
+
+async function onSignedIn() {
+  showApp(); setSyncState('syncing');
+  try {
+    await ensureHeaders();
+    await loadAll();
+    setSyncState('synced');
+    renderCurrentView();
+  } catch(e) {
+    console.error(e);
+    if (String(e).includes('401')) {
+      accessToken = null; localStorage.removeItem(TOKEN_KEY);
+      setSyncState('error'); showAuth();
+    } else { setSyncState('error'); }
+  }
+}
+
+// ── SHEETS API ─────────────────────────────────────────────
+async function sheetsGet(range) {
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!r.ok) throw new Error(`SheetsGet ${r.status}`);
+  return r.json();
+}
+async function sheetsAppend(tab, values) {
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(tab+'!A1')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    { method:'POST', headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' }, body:JSON.stringify({ values }) }
+  );
+  if (!r.ok) throw new Error(`SheetsAppend ${r.status}`);
+  return r.json();
+}
+async function sheetsUpdate(range, values) {
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+    { method:'PUT', headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' }, body:JSON.stringify({ values }) }
+  );
+  if (!r.ok) throw new Error(`SheetsUpdate ${r.status}`);
+  return r.json();
+}
+
+async function ensureHeaders() {
+  const d = await sheetsGet(`${DEBTS_TAB}!A1:E1`);
+  if (!d.values) await sheetsAppend(DEBTS_TAB, [['id','name','total_installments','start_date','description']]);
+  const p = await sheetsGet(`${PAYMENTS_TAB}!A1:J1`);
+  if (!p.values) await sheetsAppend(PAYMENTS_TAB, [['id','debt_id','date','amount','method','payment_number','file_name','file_url','drive_file_id','notes']]);
+}
+
+// ── DRIVE API ──────────────────────────────────────────────
+async function uploadToDrive(file) {
+  const meta = JSON.stringify({ name: file.name, mimeType: file.type });
+  const body = new FormData();
+  body.append('metadata', new Blob([meta], { type:'application/json' }));
+  body.append('file', file);
+  const r = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
+    { method:'POST', headers:{ Authorization:`Bearer ${accessToken}` }, body }
+  );
+  if (!r.ok) throw new Error(`Drive upload ${r.status}`);
+  const data = await r.json();
+  // Make publicly readable
+  await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
+    method:'POST',
+    headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' },
+    body: JSON.stringify({ role:'reader', type:'anyone' })
+  });
+  return { id: data.id, name: data.name, url: `https://drive.google.com/file/d/${data.id}/view` };
+}
+
+// ── LOAD DATA ──────────────────────────────────────────────
+async function loadAll() { await Promise.all([loadDebts(), loadPayments()]); }
+
+async function loadDebts() {
+  const data = await sheetsGet(`${DEBTS_TAB}!A:E`);
+  allDebts = []; debtRowMap = {};
+  const rows = data.values || [];
+  for (let i = 1; i < rows.length; i++) {
+    const [id, name, total, startDate, desc] = rows[i];
+    if (!id) continue;
+    allDebts.push({ id, name:name||'', total:parseInt(total)||1, startDate:startDate||'', desc:desc||'' });
+    debtRowMap[id] = i + 1;
+  }
+}
+
+async function loadPayments() {
+  const data = await sheetsGet(`${PAYMENTS_TAB}!A:J`);
+  allPayments = []; paymentRowMap = {};
+  const rows = data.values || [];
+  for (let i = 1; i < rows.length; i++) {
+    const [id, debtId, date, amount, method, num, fileName, fileUrl, fileId, notes] = rows[i];
+    if (!id) continue;
+    allPayments.push({ id, debtId, date, amount:parseFloat(amount)||0, method:method||'', num:parseInt(num)||0, fileName:fileName||'', fileUrl:fileUrl||'', fileId:fileId||'', notes:notes||'' });
+    paymentRowMap[id] = i + 1;
+  }
+  allPayments.sort((a,b) => b.date.localeCompare(a.date));
+}
+
+// ── SAVE DATA ──────────────────────────────────────────────
+async function saveDebtToSheets(debt) {
+  const row = [debt.id, debt.name, debt.total, debt.startDate, debt.desc];
+  if (debtRowMap[debt.id]) {
+    await sheetsUpdate(`${DEBTS_TAB}!A${debtRowMap[debt.id]}:E${debtRowMap[debt.id]}`, [row]);
+  } else {
+    await sheetsAppend(DEBTS_TAB, [row]);
+    await loadDebts();
+  }
+}
+async function savePaymentToSheets(p) {
+  const row = [p.id, p.debtId, p.date, p.amount, p.method, p.num, p.fileName, p.fileUrl, p.fileId, p.notes];
+  if (paymentRowMap[p.id]) {
+    await sheetsUpdate(`${PAYMENTS_TAB}!A${paymentRowMap[p.id]}:J${paymentRowMap[p.id]}`, [row]);
+  } else {
+    await sheetsAppend(PAYMENTS_TAB, [row]);
+    await loadPayments();
+  }
+}
+async function clearSheetRow(tab, rowNum) {
+  const cols = tab === DEBTS_TAB ? 5 : 10;
+  await sheetsUpdate(`${tab}!A${rowNum}:${String.fromCharCode(64+cols)}${rowNum}`, [Array(cols).fill('')]);
+}
+
+// ── VIEWS ──────────────────────────────────────────────────
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`view-${name}`).classList.add('active');
+  document.getElementById(`nav-${name}`).classList.add('active');
+  currentView = name;
+  renderCurrentView();
+}
+function renderCurrentView() {
+  if (currentView === 'summary') renderSummary();
+  else if (currentView === 'calendar') renderCalendar();
+  else if (currentView === 'payments') renderPayments();
+}
+
+// ── RENDER: SUMMARY ────────────────────────────────────────
+function renderSummary() {
+  const totalPaid = allPayments.reduce((s,p) => s+p.amount, 0);
+  const lastP = allPayments[0];
+  document.getElementById('summary-stats').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">Total Paid</div>
+      <div class="stat-value">₱${fmt(totalPaid)}</div>
+      <div class="stat-sub">${allPayments.length} payment${allPayments.length!==1?'s':''}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active Debts</div>
+      <div class="stat-value">${allDebts.length}</div>
+      <div class="stat-sub">${lastP ? 'Last: '+fmtDate(lastP.date) : 'No payments yet'}</div>
+    </div>`;
+
+  if (!allDebts.length) {
+    document.getElementById('debt-list').innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">No debts yet.<br>Tap <strong>+ New Debt</strong> to get started.</div></div>`;
+    return;
+  }
+  document.getElementById('debt-list').innerHTML = allDebts.map(debt => {
+    const pays = allPayments.filter(p => p.debtId === debt.id);
+    const paid = pays.length;
+    const pct  = Math.min(100, Math.round((paid/debt.total)*100));
+    const totalPaidDebt = pays.reduce((s,p) => s+p.amount, 0);
+    const lastPay = pays.sort((a,b) => b.date.localeCompare(a.date))[0];
+    const done = paid >= debt.total;
+    return `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.75rem">
+        <div>
+          <div class="card-title">${esc(debt.name)}</div>
+          ${debt.desc ? `<div class="notes-text">${esc(debt.desc)}</div>` : ''}
+        </div>
+        <div class="debt-badge ${done?'done':''}">${done ? '✓ Complete' : `${paid} / ${debt.total}`}</div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-label"><span>Payment ${paid} of ${debt.total}</span><span>${pct}%</span></div>
+        <div class="progress-bar"><div class="progress-fill ${done?'done':''}" style="width:${pct}%"></div></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-top:.5rem">
+        <span>Total paid: <span style="color:var(--accent)">₱${fmt(totalPaidDebt)}</span></span>
+        <span>${lastPay ? 'Last: '+fmtDate(lastPay.date) : 'No payments'}</span>
+      </div>
+      <div class="debt-actions">
+        <button class="btn btn-primary btn-sm" style="flex:1" onclick="openAddPayment('${debt.id}')">+ Log Payment</button>
+        <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditDebt('${debt.id}')" title="Edit">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 1 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="btn btn-secondary btn-sm btn-icon" onclick="deleteDebt('${debt.id}')" title="Delete">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── RENDER: CALENDAR ───────────────────────────────────────
+function renderCalendar() {
+  if (calYear === undefined) { const n=new Date(); calYear=n.getFullYear(); calMonth=n.getMonth(); }
+  document.getElementById('cal-label').textContent = `${MONTHS[calMonth]} ${calYear}`;
+  const firstDay     = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth  = new Date(calYear, calMonth+1, 0).getDate();
+  const n = new Date();
+  const todayStr = isoDate(n);
+  const prefix = `${calYear}-${pad(calMonth+1)}`;
+  const payDates = new Set(allPayments.filter(p => p.date.startsWith(prefix)).map(p => p.date));
+
+  let html = DAYS.map(d => `<div class="cal-dow">${d}</div>`).join('');
+  for (let i=0; i<firstDay; i++) html += `<div class="cal-day empty"></div>`;
+  for (let d=1; d<=daysInMonth; d++) {
+    const ds = `${calYear}-${pad(calMonth+1)}-${pad(d)}`;
+    const isToday = ds === todayStr;
+    const hasPay  = payDates.has(ds);
+    html += `<div class="cal-day ${isToday?'today':''} ${hasPay?'has-payment':''}" onclick="dayClick('${ds}')">
+      <span>${d}</span>${hasPay?'<div class="cal-pay-dot"></div>':''}
+    </div>`;
+  }
+  document.getElementById('cal-grid').innerHTML = html;
+
+  const monthPays = allPayments.filter(p => p.date.startsWith(prefix));
+  const el = document.getElementById('cal-month-payments');
+  if (!monthPays.length) {
+    el.innerHTML = `<div class="empty-state" style="padding:1.5rem 0"><div class="empty-text">No payments in ${MONTHS[calMonth]} ${calYear}</div></div>`;
+  } else {
+    el.innerHTML = `<div class="section-header"><span class="section-title">${MONTHS[calMonth]} Payments</span></div>` +
+      monthPays.map(p => paymentCard(p)).join('');
+  }
+}
+
+function calPrev() { if (calMonth===0){calMonth=11;calYear--;}else calMonth--; renderCalendar(); }
+function calNext() { if (calMonth===11){calMonth=0;calYear++;}else calMonth++; renderCalendar(); }
+
+function dayClick(dateStr) {
+  const pays = allPayments.filter(p => p.date === dateStr);
+  if (!pays.length) return;
+  document.getElementById('day-modal-title').textContent = fmtDate(dateStr);
+  document.getElementById('day-modal-content').innerHTML = pays.map(p => {
+    const debt = allDebts.find(d => d.id === p.debtId);
+    return `<div class="day-pay">
+      <div style="display:flex;justify-content:space-between;margin-bottom:.4rem">
+        <strong>${esc(debt?.name||'—')}</strong>
+        <span style="color:var(--accent)">₱${fmt(p.amount)}</span>
+      </div>
+      <div class="pay-meta">
+        <span class="tag">${esc(p.method)}</span>
+        <span class="tag">Payment ${p.num} of ${debt?.total||'?'}</span>
+        ${p.fileUrl?`<a href="${p.fileUrl}" target="_blank" class="receipt-link">📎 Receipt</a>`:''}
+      </div>
+      ${p.notes?`<div class="notes-text" style="margin-top:.35rem">${esc(p.notes)}</div>`:''}
+    </div>`;
+  }).join('');
+  openModal('modal-day');
+}
+
+// ── RENDER: PAYMENTS ───────────────────────────────────────
+function renderPayments() {
+  const chips = ['<div class="filter-chip '+(activeFilter==='all'?'active':'')+'" onclick="setFilter(\'all\')">All</div>',
+    ...allDebts.map(d => `<div class="filter-chip ${activeFilter===d.id?'active':''}" onclick="setFilter('${d.id}')">${esc(d.name)}</div>`)
+  ].join('');
+  document.getElementById('payments-filter').innerHTML = chips;
+
+  const filtered = activeFilter==='all' ? allPayments : allPayments.filter(p => p.debtId===activeFilter);
+  if (!filtered.length) {
+    document.getElementById('payments-list').innerHTML = `<div class="empty-state"><div class="empty-icon">💳</div><div class="empty-text">No payments yet.</div></div>`;
+    return;
+  }
+  document.getElementById('payments-list').innerHTML = filtered.map(p => paymentCard(p)).join('');
+}
+
+function setFilter(id) { activeFilter=id; renderPayments(); }
+
+function paymentCard(p) {
+  const debt = allDebts.find(d => d.id === p.debtId);
+  return `<div class="payment-item">
+    <div class="pay-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+    </div>
+    <div class="pay-info">
+      <div class="pay-top">
+        <div class="pay-name">${esc(debt?.name||'—')}</div>
+        <div class="pay-amount">₱${fmt(p.amount)}</div>
+      </div>
+      <div class="pay-meta">
+        <span>${fmtDate(p.date)}</span>
+        <span class="tag">${esc(p.method)}</span>
+        <span class="tag">#${p.num} of ${debt?.total||'?'}</span>
+        ${p.fileUrl?`<a href="${p.fileUrl}" target="_blank" class="receipt-link">📎 Receipt</a>`:''}
+      </div>
+      ${p.notes?`<div class="notes-text">${esc(p.notes)}</div>`:''}
+    </div>
+  </div>`;
+}
+
+// ── MODALS ─────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target===o) o.classList.remove('open'); });
+});
+
+// ADD/EDIT DEBT
+function openAddDebt() {
+  document.getElementById('debt-modal-title').textContent = 'New Debt';
+  document.getElementById('debt-name').value = '';
+  document.getElementById('debt-installments').value = '';
+  document.getElementById('debt-start-date').value = todayISO();
+  document.getElementById('debt-desc').value = '';
+  document.getElementById('debt-editing-id').value = '';
+  openModal('modal-debt');
+}
+function openEditDebt(id) {
+  const debt = allDebts.find(d => d.id===id); if (!debt) return;
+  document.getElementById('debt-modal-title').textContent = 'Edit Debt';
+  document.getElementById('debt-name').value = debt.name;
+  document.getElementById('debt-installments').value = debt.total;
+  document.getElementById('debt-start-date').value = debt.startDate;
+  document.getElementById('debt-desc').value = debt.desc;
+  document.getElementById('debt-editing-id').value = debt.id;
+  openModal('modal-debt');
+}
+async function saveDebt() {
+  const name   = document.getElementById('debt-name').value.trim();
+  const total  = parseInt(document.getElementById('debt-installments').value);
+  const start  = document.getElementById('debt-start-date').value;
+  const desc   = document.getElementById('debt-desc').value.trim();
+  const editId = document.getElementById('debt-editing-id').value;
+  if (!name)           { toast('Debt name is required'); return; }
+  if (!total || total<1){ toast('Enter valid installment count'); return; }
+  setSyncState('syncing');
+  try {
+    if (editId) {
+      const idx = allDebts.findIndex(d => d.id===editId);
+      if (idx>=0) { allDebts[idx] = {...allDebts[idx], name, total, startDate:start, desc}; await saveDebtToSheets(allDebts[idx]); }
+    } else {
+      const debt = { id:genId(), name, total, startDate:start, desc };
+      allDebts.push(debt); await saveDebtToSheets(debt);
+    }
+    setSyncState('synced'); closeModal('modal-debt'); renderCurrentView(); toast('Debt saved ✓');
+  } catch(e) { console.error(e); setSyncState('error'); toast('Save failed — check connection'); }
+}
+async function deleteDebt(id) {
+  const debt = allDebts.find(d => d.id===id); if (!debt) return;
+  const hasPays = allPayments.some(p => p.debtId===id);
+  if (!confirm(`Delete "${debt.name}"${hasPays?' and all its payments':''}? This cannot be undone.`)) return;
+  setSyncState('syncing');
+  try {
+    if (debtRowMap[id]) await clearSheetRow(DEBTS_TAB, debtRowMap[id]);
+    for (const p of allPayments.filter(p => p.debtId===id)) {
+      if (paymentRowMap[p.id]) await clearSheetRow(PAYMENTS_TAB, paymentRowMap[p.id]);
+    }
+    allDebts = allDebts.filter(d => d.id!==id);
+    allPayments = allPayments.filter(p => p.debtId!==id);
+    setSyncState('synced'); renderCurrentView(); toast('Debt deleted');
+  } catch(e) { console.error(e); setSyncState('error'); toast('Delete failed'); }
+}
+
+// ADD PAYMENT
+function openAddPayment(debtId) {
+  const sel = document.getElementById('payment-debt-id');
+  sel.innerHTML = '<option value="">Select debt...</option>' +
+    allDebts.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  if (debtId) sel.value = debtId;
+  document.getElementById('payment-date').value = todayISO();
+  document.getElementById('payment-amount').value = '';
+  document.getElementById('payment-method').value = '';
+  document.getElementById('payment-file').value = '';
+  document.getElementById('payment-notes').value = '';
+  document.getElementById('file-label').classList.remove('has-file');
+  document.getElementById('file-label-text').textContent = 'Attach image or PDF...';
+  document.getElementById('upload-info').style.display = 'none';
+  document.getElementById('save-pay-btn').disabled = false;
+  openModal('modal-payment');
+}
+function fileChanged(input) {
+  const file = input.files[0];
+  const label = document.getElementById('file-label');
+  const text  = document.getElementById('file-label-text');
+  if (file) { label.classList.add('has-file'); text.textContent = file.name; }
+  else      { label.classList.remove('has-file'); text.textContent = 'Attach image or PDF...'; }
+}
+async function savePayment() {
+  const debtId = document.getElementById('payment-debt-id').value;
+  const date   = document.getElementById('payment-date').value;
+  const amount = parseFloat(document.getElementById('payment-amount').value);
+  const method = document.getElementById('payment-method').value;
+  const file   = document.getElementById('payment-file').files[0];
+  const notes  = document.getElementById('payment-notes').value.trim();
+
+  if (!debtId)          { toast('Select a debt'); return; }
+  if (!date)            { toast('Date is required'); return; }
+  if (!amount||amount<=0){ toast('Enter a valid amount'); return; }
+  if (!method)          { toast('Select payment method'); return; }
+
+  const btn = document.getElementById('save-pay-btn');
+  btn.disabled = true; setSyncState('syncing');
+  try {
+    let fileName='', fileUrl='', fileId='';
+    if (file) {
+      document.getElementById('upload-info').style.display = 'block';
+      const res = await uploadToDrive(file);
+      fileName = res.name; fileUrl = res.url; fileId = res.id;
+      document.getElementById('upload-info').style.display = 'none';
+    }
+    const debtPays = allPayments.filter(p => p.debtId===debtId);
+    const num = debtPays.length + 1;
+    const payment = { id:genId(), debtId, date, amount, method, num, fileName, fileUrl, fileId, notes };
+    allPayments.unshift(payment);
+    allPayments.sort((a,b) => b.date.localeCompare(a.date));
+    await savePaymentToSheets(payment);
+    const debt = allDebts.find(d => d.id===debtId);
+    setSyncState('synced'); closeModal('modal-payment'); renderCurrentView();
+    toast(`Payment ${num} of ${debt?.total||'?'} saved ✓`);
+  } catch(e) {
+    console.error(e); setSyncState('error');
+    toast('Save failed — check connection');
+    btn.disabled = false;
+    document.getElementById('upload-info').style.display = 'none';
+  }
+}
+
+// ── HELPERS ────────────────────────────────────────────────
+function genId()    { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function pad(n)     { return String(n).padStart(2,'0'); }
+function isoDate(d) { return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+function todayISO() { return isoDate(new Date()); }
+function fmt(n)     { return (n||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtDate(s) {
+  if (!s) return '';
+  const [y,m,d] = s.split('-');
+  return `${MONTHS[parseInt(m)-1].slice(0,3)} ${parseInt(d)}, ${y}`;
+}
+function esc(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── INIT ───────────────────────────────────────────────────
+window.onload = () => {
+  const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth();
+};
+</script>
+
+<script src="https://accounts.google.com/gsi/client" onload="initGIS()" async defer></script>
+</body>
+</html>
