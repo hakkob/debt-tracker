@@ -440,7 +440,22 @@ async function sheetsUpdate(range, values) {
   return r.json();
 }
 
+async function ensureTab(title) {
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(title+'!A1')}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (r.ok) return;
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] })
+  });
+}
+
 async function ensureHeaders() {
+  await ensureTab(DEBTS_TAB);
+  await ensureTab(PAYMENTS_TAB);
   const d = await sheetsGet(`${DEBTS_TAB}!A1:E1`);
   if (!d.values) await sheetsAppend(DEBTS_TAB, [['id','name','total_installments','start_date','description']]);
   const p = await sheetsGet(`${PAYMENTS_TAB}!A1:J1`);
