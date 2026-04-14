@@ -75,12 +75,13 @@ function handleLoad(ss, email) {
   const usersSheet    = getSheet(ss, 'Users');
 
   // Ensure headers
-  if (debtsSheet.getLastRow()    === 0) debtsSheet.appendRow(['id','name','total_installments','start_date','description']);
+  if (debtsSheet.getLastRow()    === 0) debtsSheet.appendRow(['id','name','total_installments','start_date','description','total_amount']);
   if (paymentsSheet.getLastRow() === 0) paymentsSheet.appendRow(['id','debt_id','date','amount','method','payment_number','file_name','file_url','drive_file_id','notes']);
   if (usersSheet.getLastRow()    === 0) usersSheet.appendRow(['email','role','allowed_debt_ids']);
 
   const allDebts = sheetRows(debtsSheet).map(r => ({
-    id: r[0], name: r[1], total: parseInt(r[2]) || 1, startDate: r[3] || '', desc: r[4] || ''
+    id: r[0], name: r[1], total: parseInt(r[2]) || 1, startDate: r[3] || '', desc: r[4] || '',
+    totalAmount: parseFloat(r[5]) || 0
   }));
 
   const allPayments = sheetRows(paymentsSheet).map(r => ({
@@ -118,9 +119,9 @@ function handleLoad(ss, email) {
 function handleSaveDebt(ss, email, debt) {
   if (!isOwner(email)) return { error: 'Forbidden' };
   const sheet = getSheet(ss, 'Debts');
-  const row   = [debt.id, debt.name, debt.total, debt.startDate, debt.desc];
+  const row    = [debt.id, debt.name, debt.total, debt.startDate, debt.desc, debt.totalAmount || 0];
   const rowNum = findRow(sheet, debt.id);
-  if (rowNum > 0) sheet.getRange(rowNum, 1, 1, 5).setValues([row]);
+  if (rowNum > 0) sheet.getRange(rowNum, 1, 1, 6).setValues([row]);
   else sheet.appendRow(row);
   return { ok: true };
 }
@@ -130,7 +131,7 @@ function handleDeleteDebt(ss, email, id) {
   const debtsSheet    = getSheet(ss, 'Debts');
   const paymentsSheet = getSheet(ss, 'Payments');
   const dRow = findRow(debtsSheet, id);
-  if (dRow > 0) debtsSheet.getRange(dRow, 1, 1, 5).clearContent();
+  if (dRow > 0) debtsSheet.getRange(dRow, 1, 1, 6).clearContent();
   // Clear all payments for this debt
   const payVals = paymentsSheet.getDataRange().getValues();
   for (let i = payVals.length - 1; i >= 1; i--) {

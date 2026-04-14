@@ -247,6 +247,10 @@
       <label>Debt Name</label>
       <input type="text" id="debt-name" placeholder="e.g. Laptop, Phone, Personal Loan...">
     </div>
+    <div class="form-group">
+      <label>Total Debt Amount (₱)</label>
+      <input type="number" id="debt-total-amount" placeholder="0.00" min="0" step="0.01">
+    </div>
     <div class="input-row">
       <div class="form-group">
         <label>Total Installments</label>
@@ -534,12 +538,15 @@ function renderSummary() {
     document.getElementById('debt-list').innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">${isOwner() ? 'No debts yet.<br>Tap <strong>+ New Debt</strong> to get started.' : 'No debts assigned to you yet.'}</div></div>`;
   } else {
     document.getElementById('debt-list').innerHTML = myDebts.map(debt => {
-      const pays = myPayments.filter(p => p.debtId === debt.id);
-      const paid = pays.length;
-      const pct  = Math.min(100, Math.round((paid/debt.total)*100));
-      const totalPaidDebt = pays.reduce((s,p) => s+p.amount, 0);
-      const lastPay = pays.sort((a,b) => b.date.localeCompare(a.date))[0];
-      const done = paid >= debt.total;
+      const pays        = myPayments.filter(p => p.debtId === debt.id);
+      const paidCount   = pays.length;
+      const totalPaid   = pays.reduce((s,p) => s+p.amount, 0);
+      const lastPay     = pays.slice().sort((a,b) => b.date.localeCompare(a.date))[0];
+      const hasAmount   = debt.totalAmount > 0;
+      const remaining   = hasAmount ? Math.max(0, debt.totalAmount - totalPaid) : null;
+      const amtPct      = hasAmount ? Math.min(100, Math.round((totalPaid / debt.totalAmount) * 100)) : null;
+      const countPct    = Math.min(100, Math.round((paidCount / debt.total) * 100));
+      const done        = hasAmount ? totalPaid >= debt.totalAmount : paidCount >= debt.total;
       const ownerActions = isOwner() ? `
         <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditDebt('${debt.id}')" title="Edit">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 1 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -553,16 +560,27 @@ function renderSummary() {
             <div class="card-title">${esc(debt.name)}</div>
             ${debt.desc ? `<div class="notes-text">${esc(debt.desc)}</div>` : ''}
           </div>
-          <div class="debt-badge ${done?'done':''}">${done ? '✓ Complete' : `${paid} / ${debt.total}`}</div>
+          <div class="debt-badge ${done?'done':''}">${done ? '✓ Complete' : `${paidCount} / ${debt.total}`}</div>
         </div>
+        ${hasAmount ? `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.35rem">
+          <span style="font-family:'Syne',sans-serif;font-size:1.25rem;font-weight:700;color:var(--accent)">₱${fmt(remaining)}<span style="font-size:.65rem;color:var(--muted);font-family:'DM Mono',monospace;font-weight:400;margin-left:.3rem">remaining</span></span>
+          <span style="font-size:.7rem;color:var(--muted)">of ₱${fmt(debt.totalAmount)}</span>
+        </div>
+        <div class="progress-wrap" style="margin-top:0">
+          <div class="progress-label"><span style="color:var(--accent)">₱${fmt(totalPaid)} paid</span><span>${amtPct}%</span></div>
+          <div class="progress-bar"><div class="progress-fill ${done?'done':''}" style="width:${amtPct}%"></div></div>
+        </div>
+        <div class="progress-wrap" style="margin-top:.5rem">
+          <div class="progress-label" style="font-size:.65rem"><span>Installment ${paidCount} of ${debt.total}</span><span>${countPct}%</span></div>
+          <div class="progress-bar" style="height:3px"><div class="progress-fill" style="width:${countPct}%;opacity:.6"></div></div>
+        </div>` : `
         <div class="progress-wrap">
-          <div class="progress-label"><span>Payment ${paid} of ${debt.total}</span><span>${pct}%</span></div>
-          <div class="progress-bar"><div class="progress-fill ${done?'done':''}" style="width:${pct}%"></div></div>
+          <div class="progress-label"><span>Payment ${paidCount} of ${debt.total}</span><span>${countPct}%</span></div>
+          <div class="progress-bar"><div class="progress-fill ${done?'done':''}" style="width:${countPct}%"></div></div>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-top:.5rem">
-          <span>Total paid: <span style="color:var(--accent)">₱${fmt(totalPaidDebt)}</span></span>
-          <span>${lastPay ? 'Last: '+fmtDate(lastPay.date) : 'No payments'}</span>
-        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:.35rem">Total paid: <span style="color:var(--accent)">₱${fmt(totalPaid)}</span></div>`}
+        <div style="font-size:.7rem;color:var(--muted);margin-top:.4rem">${lastPay ? 'Last payment: '+fmtDate(lastPay.date) : 'No payments yet'}</div>
         <div class="debt-actions">
           <button class="btn btn-primary btn-sm" style="flex:1" onclick="openAddPayment('${debt.id}')">+ Log Payment</button>
           ${ownerActions}
@@ -727,6 +745,7 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
 function openAddDebt() {
   document.getElementById('debt-modal-title').textContent = 'New Debt';
   document.getElementById('debt-name').value = '';
+  document.getElementById('debt-total-amount').value = '';
   document.getElementById('debt-installments').value = '';
   document.getElementById('debt-start-date').value = todayISO();
   document.getElementById('debt-desc').value = '';
@@ -737,6 +756,7 @@ function openEditDebt(id) {
   const debt = allDebts.find(d => d.id===id); if (!debt) return;
   document.getElementById('debt-modal-title').textContent = 'Edit Debt';
   document.getElementById('debt-name').value = debt.name;
+  document.getElementById('debt-total-amount').value = debt.totalAmount || '';
   document.getElementById('debt-installments').value = debt.total;
   document.getElementById('debt-start-date').value = debt.startDate;
   document.getElementById('debt-desc').value = debt.desc;
@@ -745,6 +765,7 @@ function openEditDebt(id) {
 }
 async function saveDebt() {
   const name   = document.getElementById('debt-name').value.trim();
+  const totalAmount = parseFloat(document.getElementById('debt-total-amount').value) || 0;
   const total  = parseInt(document.getElementById('debt-installments').value);
   const start  = document.getElementById('debt-start-date').value;
   const desc   = document.getElementById('debt-desc').value.trim();
@@ -754,8 +775,8 @@ async function saveDebt() {
   setSyncState('syncing');
   try {
     const debt = editId
-      ? { ...(allDebts.find(d=>d.id===editId)||{}), name, total, startDate:start, desc }
-      : { id:genId(), name, total, startDate:start, desc };
+      ? { ...(allDebts.find(d=>d.id===editId)||{}), name, total, totalAmount, startDate:start, desc }
+      : { id:genId(), name, total, totalAmount, startDate:start, desc };
     await apiCall('saveDebt', { data: debt });
     await reloadAll();
     setSyncState('synced'); closeModal('modal-debt'); renderCurrentView(); toast('Debt saved ✓');
