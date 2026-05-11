@@ -153,9 +153,53 @@ function handleSavePayment(ss, email, payment) {
   const row    = [payment.id, payment.debtId, payment.date, payment.amount, payment.method,
                   payment.num, payment.fileName, payment.fileUrl, payment.fileId, payment.notes];
   const rowNum = findRow(sheet, payment.id);
+  const isNew  = rowNum < 0;
   if (rowNum > 0) sheet.getRange(rowNum, 1, 1, 10).setValues([row]);
   else sheet.appendRow(row);
+  if (isNew) { try { notifyPayment(ss, payment, email); } catch (e) {} }
   return { ok: true };
+}
+
+function notifyPayment(ss, payment, senderEmail) {
+  const debt = sheetRows(getSheet(ss, 'Debts')).find(r => String(r[0]) === String(payment.debtId));
+  if (!debt) return;
+  const debtName  = debt[1];
+  const totalInst = parseInt(debt[2]) || 1;
+
+  const totalPaid = sheetRows(getSheet(ss, 'Payments'))
+    .filter(r => String(r[1]) === String(payment.debtId))
+    .reduce((s, r) => s + (parseFloat(r[3]) || 0), 0);
+
+  const recipients = sheetRows(getSheet(ss, 'Users'))
+    .filter(r => {
+      const ue = String(r[0]).toLowerCase();
+      if (ue === senderEmail) return false;
+      const role = r[1] || 'viewer';
+      if (role === 'owner') return true;
+      const debtIds = r[2] ? String(r[2]).split(',').map(s => s.trim()).filter(Boolean) : [];
+      return !debtIds.length || debtIds.includes(payment.debtId);
+    })
+    .map(r => r[0]);
+
+  if (!recipients.length) return;
+
+  const fmt = n => '₱' + Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const subject = '[Debt Tracker] Payment logged for ' + debtName;
+  const body = [
+    'A new payment was logged for "' + debtName + '":',
+    '',
+    'Amount: ' + fmt(payment.amount),
+    'Date: '   + payment.date,
+    'Method: ' + payment.method,
+    payment.notes ? 'Notes: ' + payment.notes : null,
+    '',
+    'Payment ' + payment.num + ' of ' + totalInst,
+    'Total paid: ' + fmt(totalPaid),
+    '',
+    'View: https://hakkob.github.io/debt-tracker/'
+  ].filter(x => x !== null).join('\n');
+
+  recipients.forEach(to => { try { MailApp.sendEmail(to, subject, body); } catch (e) {} });
 }
 
 function handleDeletePayment(ss, email, id) {
