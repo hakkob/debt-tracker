@@ -187,7 +187,7 @@
       <div class="stats-grid" id="summary-stats"></div>
       <div class="section-header">
         <span class="section-title">Your Debts</span>
-        <button id="new-debt-btn" class="btn btn-ghost btn-sm" onclick="openAddDebt()">+ New Debt</button>
+        <button id="new-debt-btn" class="btn btn-ghost btn-sm" onclick="openAddDebt()" style="display:none">+ New Debt</button>
       </div>
       <div id="debt-list"><div class="loading"><div class="spinner"></div> Loading...</div></div>
       <div id="user-management"></div>
@@ -362,7 +362,7 @@
 <script>
 // ── CONSTANTS ──────────────────────────────────────────────
 const CLIENT_ID   = '1016619293334-ch6q469ml4n0taasgb4eo7o9tk1mkegk.apps.googleusercontent.com';
-const SCRIPT_URL  = 'https://script.google.com/macros/s/AKfycbznY9M5HEdMyEdYjTcKkSB3hUAmp8ZAFBUkVjvDJgJnnbS7v8eqvosfzazrgCHS8oE/exec';
+const SCRIPT_URL  = 'https://script.google.com/macros/s/AKfycbzBrGeWA-QEqYoqwpLlsxxvYV3FVITPfvVfwdJEWN4rd4yZAToFSZEeTvcat6zvwNB9OA/exec';
 const OWNER_EMAIL = 'felipe.jacob.g@gmail.com';
 const TOKEN_KEY   = 'debt_gtoken';
 const SCOPES      = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
@@ -400,7 +400,7 @@ function initGIS() {
   else showAuth();
 }
 
-function signIn() { tokenClient.requestAccessToken({ prompt: 'consent' }); }
+function signIn() { tokenClient.requestAccessToken({ prompt: 'select_account' }); }
 function signOut() {
   accessToken = null;
   localStorage.removeItem(TOKEN_KEY);
@@ -442,6 +442,7 @@ async function onSignedIn() {
     currentUserRole  = data.role;
     currentUserDebts = null; // filtering is done server-side; we only receive allowed data
     setSyncState('synced');
+    if (currentUserEmail) document.getElementById('sync-label').textContent = 'synced · ' + currentUserEmail;
     renderCurrentView();
   } catch(e) {
     console.error(e);

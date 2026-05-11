@@ -41,15 +41,16 @@ function verifyToken(token) {
   if (!token) return null;
   try {
     const r = UrlFetchApp.fetch(
-      'https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=' + token,
-      { muteHttpExceptions: true }
+      'https://www.googleapis.com/oauth2/v3/userinfo',
+      { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
     );
+    if (r.getResponseCode() !== 200) return null;
     const d = JSON.parse(r.getContentText());
-    return d.email || null;
+    return d.email ? d.email.toLowerCase() : null;
   } catch (e) { return null; }
 }
 
-function isOwner(email) { return email === OWNER_EMAIL; }
+function isOwner(email) { return email && email.toLowerCase() === OWNER_EMAIL.toLowerCase(); }
 
 function getSheet(ss, name) {
   return ss.getSheetByName(name) || ss.insertSheet(name);
@@ -96,12 +97,12 @@ function handleLoad(ss, email) {
   }));
 
   // Auto-register owner on first sign-in
-  if (isOwner(email) && !allUsers.find(u => u.email === email)) {
+  if (isOwner(email) && !allUsers.find(u => u.email.toLowerCase() === email)) {
     usersSheet.appendRow([email, 'owner', '']);
     allUsers.push({ email, role: 'owner', debtIds: [] });
   }
 
-  const user = allUsers.find(u => u.email === email);
+  const user = allUsers.find(u => u.email.toLowerCase() === email);
   if (!user && !isOwner(email)) return { error: 'Access denied' };
 
   const role           = isOwner(email) ? 'owner' : 'viewer';
